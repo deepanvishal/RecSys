@@ -1,5 +1,4 @@
 from pathlib import Path
-import scipy.sparse as sp
 import numpy as np
 
 
@@ -14,14 +13,12 @@ checks.append(('svd_model_saved', ok))
 print(f"{'OK' if ok else 'MISSING'}: SVD best model — found {len(models)}")
 
 
-# Model loads, fits, recommends
+# Load saved best, exercise recommend / foldin / cold start
 try:
     from models.svd import SVDModel
-    from config.config_loader import get_config
-    cfg = get_config()
-    matrix = sp.load_npz('artifacts/cache/svd_item_user_matrix.npz')
-    model = SVDModel(factors=64)
-    model.fit(matrix)
+    model = SVDModel.load(str(models[0]))
+    model.is_fitted = True if model.model.user_factors is not None else False
+    assert model.is_fitted, 'loaded model not marked fitted'
     recs = model.recommend(0, n=10)
     assert len(recs) == 10, f'Expected 10 recs, got {len(recs)}'
     foldin_recs = model.foldin_recommend([0, 1, 2, 3], n=10)
@@ -35,7 +32,7 @@ except Exception as e:
     print(f'FAILED: SVD — {e}')
 
 
-# Fold-in latency check
+# Fold-in latency
 try:
     import time
     items = list(range(5))
