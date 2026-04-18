@@ -1,0 +1,35 @@
+# Environment
+.env
+__pycache__/
+*.pyc
+venv/
+
+
+# Data
+data/raw/
+data/processed/
+
+
+# Artifacts
+artifacts/models/
+artifacts/embeddings/
+artifacts/indexes/
+artifacts/cache/
+
+
+# Logs
+logs/
+wandb/
+
+
+# Notebooks
+.ipynb_checkpoints/
+
+
+# IDE
+.vscode/
+.idea/
+
+
+# OS
+.DS_Store
