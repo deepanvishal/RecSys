@@ -7,6 +7,7 @@ from sentence_transformers import SentenceTransformer
 from config.config_loader import get_config
 from utils.logger import get_logger
 from utils.seed import set_seed
+from utils.device import get_device, log_device_info
 
 
 logger = get_logger('feature_store')
@@ -56,15 +57,19 @@ def build_two_tower_features(cfg):
     logger.info('Building Two-Tower features (title embeddings)...')
     item_meta = pd.read_parquet(Path(cfg['data']['processed_dir']) / 'item_metadata.parquet')
     model_name = cfg['models']['two_tower']['sentence_transformer_model']
-    logger.info(f'Loading sentence transformer: {model_name}')
-    st_model = SentenceTransformer(model_name)
+    device = get_device()
+    log_device_info()
+    logger.info(f'Loading sentence transformer: {model_name} on {device}')
+    st_model = SentenceTransformer(model_name, device=str(device))
     titles = item_meta['title'].fillna('Unknown').tolist()
     logger.info(f'Encoding {len(titles)} item titles...')
+    batch_size = 2048 if device.type == 'cuda' else 512
     embeddings = st_model.encode(
         titles,
-        batch_size=512,
+        batch_size=batch_size,
         show_progress_bar=True,
-        convert_to_numpy=True
+        convert_to_numpy=True,
+        normalize_embeddings=True
     ).astype(np.float32)
     emb_dir = Path(cfg['models']['two_tower']['embeddings_path'])
     emb_dir.mkdir(parents=True, exist_ok=True)

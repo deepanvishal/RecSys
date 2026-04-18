@@ -119,9 +119,17 @@ def simulate_daily_updates(df_full, cfg):
         logger.info(f'Day {day}: active_items={len(active_items)}, new_users={new_users_per_day}, deprecated={n_deprecate}')
 
 
-    # Save snapshots
+    def _convert(obj):
+        if isinstance(obj, (np.integer,)): return int(obj)
+        if isinstance(obj, (np.floating,)): return float(obj)
+        if isinstance(obj, np.ndarray): return obj.tolist()
+        if isinstance(obj, list): return [_convert(i) for i in obj]
+        if isinstance(obj, dict): return {k: _convert(v) for k, v in obj.items()}
+        return obj
+
+
     with open(out / 'daily_snapshots.json', 'w') as f:
-        json.dump(snapshots, f, indent=2)
+        json.dump(_convert(snapshots), f, indent=2)
     logger.info(f'Saved {n_days} daily snapshots to {out}/daily_snapshots.json')
     return snapshots
 

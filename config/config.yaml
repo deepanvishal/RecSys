@@ -2,6 +2,7 @@ project:
   name: serko-recsys
   seed: 42
   version: '1.0.0'
+  device: cuda  # global device — all modules reference this
 
 
 wandb:
@@ -18,6 +19,7 @@ data:
   cache_dir: artifacts/cache/
   dataset_name: McAuley-Lab/Amazon-Reviews-2023
   category: Electronics
+  hf_subset: 0core_rating_only_Electronics  # actual HuggingFace subset name
   min_user_interactions: 1
   min_item_interactions: 5
   max_sequence_length: 50

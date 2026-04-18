@@ -26,7 +26,7 @@ def download_amazon_electronics():
     # rating_only configs contain: user_id, parent_asin, rating, timestamp
     reviews = load_dataset(
         cfg['data']['dataset_name'],
-        '0core_rating_only_Electronics',
+        cfg['data']['hf_subset'],
         split='full',
         trust_remote_code=True
     )
