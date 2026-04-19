@@ -199,5 +199,94 @@ def run():
     return summary
 
 
+def run_reranked():
+    """
+    Compute bias metrics on engine output (post-reranker where applicable).
+    Uses the full TieredRecommendationEngine so routing matches production.
+    Writes _reranked CSVs and updates bias_summary.csv with new keys.
+    """
+    set_seed()
+    processed = Path('data/processed')
+    artifacts = Path('artifacts')
+    out_dir = Path('artifacts/bias')
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    train_df = pd.read_parquet(processed / 'train.parquet')
+    val_df = pd.read_parquet(processed / 'val.parquet')[['user_id', 'item_id']]
+    user_meta = pd.read_parquet(processed / 'user_metadata.parquet')
+    item_pop = train_df.groupby('item_id').size()
+    genre_matrix = np.load(str(artifacts / 'two_tower/item_genre_matrix.npy'))
+
+    stats = json.load(open(processed / 'dataset_stats.json'))
+    n_items = stats['n_items']
+
+    user_history = (
+        train_df.sort_values('timestamp')
+        .groupby('user_id', sort=False)['item_id']
+        .apply(list).to_dict()
+    )
+
+    cfg = get_config()
+    from inference.engine import TieredRecommendationEngine
+    engine = TieredRecommendationEngine(cfg)
+
+    uids = val_df['user_id'].values.astype(int)
+    n_users = len(uids)
+    recs = np.zeros((n_users, 10), dtype=np.int32)
+
+    logger.info(f'Running engine for {n_users} val users...')
+    for i, uid in enumerate(uids):
+        history = user_history.get(int(uid), [])
+        result = engine.recommend(user_id=int(uid), history=history, N=10)
+        items = result['items']
+        recs[i, :len(items)] = items[:10]
+        if (i + 1) % 1000 == 0:
+            logger.info(f'  {i+1}/{n_users}')
+
+    pop_bias = popularity_bias(recs, item_pop, n_items)
+    logger.info(f'Reranked popularity ratio: {pop_bias["popularity_ratio"]:.3f}')
+    pd.DataFrame([pop_bias]).to_csv(out_dir / 'reranked_popularity_bias.csv', index=False)
+
+    gender_df = demographic_bias(
+        recs, val_df, user_meta, 'gender_enc', {0: 'Female', 1: 'Male'},
+    )
+    gender_df.to_csv(out_dir / 'reranked_gender_bias.csv', index=False)
+
+    age_df = demographic_bias(recs, val_df, user_meta, 'age_enc', AGE_LABELS)
+    age_df.to_csv(out_dir / 'reranked_age_bias.csv', index=False)
+
+    genre_df = genre_concentration(recs, genre_matrix)
+    genre_df.to_csv(out_dir / 'reranked_genre_concentration.csv', index=False)
+
+    summary_path = out_dir / 'bias_summary.csv'
+    if summary_path.exists():
+        summary = pd.read_csv(summary_path).iloc[0].to_dict()
+    else:
+        summary = {}
+
+    summary.update({
+        'reranked_popularity_ratio': pop_bias['popularity_ratio'],
+        'reranked_longtail_fraction': pop_bias['longtail_fraction'],
+        'reranked_gender_gap_HR10': float(
+            gender_df.set_index('group').loc['Male', 'HR@10']
+            - gender_df.set_index('group').loc['Female', 'HR@10']
+        ),
+        'reranked_age_hr10_range': float(
+            age_df['HR@10'].max() - age_df['HR@10'].min()
+        ),
+        'reranked_top_genre': genre_df.iloc[0]['genre'],
+        'reranked_top_genre_frac': float(genre_df.iloc[0]['fraction_in_recs']),
+    })
+    pd.DataFrame([summary]).to_csv(summary_path, index=False)
+    logger.info('Reranked bias audit complete.')
+    logger.info(f'  Popularity ratio: {pop_bias["popularity_ratio"]:.3f}')
+    logger.info(f'  Gender gap HR@10: {summary["reranked_gender_gap_HR10"]:+.4f}')
+    return summary
+
+
 if __name__ == '__main__':
-    run()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == 'reranked':
+        run_reranked()
+    else:
+        run()

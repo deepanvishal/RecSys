@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wsl -d Ubuntu-22.04 -- bash -c \"cd /mnt/c/Users/Deepan/RecSys/RecSys && PYTHONPATH=. ~/venvs/recsys/bin/python check_ui_ready.py 2>&1 | tail -25\")",
+      "Bash(wsl -d Ubuntu-22.04 -- bash -c \"cd /mnt/c/Users/Deepan/RecSys/RecSys && PYTHONPATH=. ~/venvs/recsys/bin/python -c 'import ast; ast.parse\\(open\\(\\\\\"ui/app.py\\\\\"\\).read\\(\\)\\); print\\(\\\\\"ui/app.py syntax OK\\\\\"\\)'\")",
+      "Bash(wsl -d Ubuntu-22.04 -- bash -c \"pkill -f 'api.main' 2>&1; pkill -f 'streamlit' 2>&1; sleep 2; ps -eo pid,cmd | grep -E 'api.main|streamlit|uvicorn' | grep -v grep || echo 'All API + streamlit processes stopped'\")",
+      "Bash(wsl -d Ubuntu-22.04 -- bash -c \"kill -9 1321 2>&1; sleep 1; ps -eo pid,cmd | grep -E 'api.main|streamlit|uvicorn' | grep -v grep || echo 'Clean'\")",
+      "Bash(wsl -d Ubuntu-22.04 -- bash -c \"pkill -f 'api.main' 2>&1; sleep 1; ps -eo pid,cmd | grep api.main | grep -v grep || echo clean\")",
+      "Bash(wsl -d Ubuntu-22.04 -- bash -c \"ps -eo pid,cmd | grep api.main | grep -v grep || echo clean\")"
+    ]
+  }
+}
