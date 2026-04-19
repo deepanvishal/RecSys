@@ -1,3 +1,14 @@
+---
+title: Serko RecSys
+emoji: 🎬
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+---
+
 # Serko RecSys — MovieLens 1M
 
 Production-grade recommender system built as a take-home assignment.

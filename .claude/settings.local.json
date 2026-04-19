@@ -6,7 +6,8 @@
       "Bash(wsl -d Ubuntu-22.04 -- bash -c \"pkill -f 'api.main' 2>&1; pkill -f 'streamlit' 2>&1; sleep 2; ps -eo pid,cmd | grep -E 'api.main|streamlit|uvicorn' | grep -v grep || echo 'All API + streamlit processes stopped'\")",
       "Bash(wsl -d Ubuntu-22.04 -- bash -c \"kill -9 1321 2>&1; sleep 1; ps -eo pid,cmd | grep -E 'api.main|streamlit|uvicorn' | grep -v grep || echo 'Clean'\")",
       "Bash(wsl -d Ubuntu-22.04 -- bash -c \"pkill -f 'api.main' 2>&1; sleep 1; ps -eo pid,cmd | grep api.main | grep -v grep || echo clean\")",
-      "Bash(wsl -d Ubuntu-22.04 -- bash -c \"ps -eo pid,cmd | grep api.main | grep -v grep || echo clean\")"
+      "Bash(wsl -d Ubuntu-22.04 -- bash -c \"ps -eo pid,cmd | grep api.main | grep -v grep || echo clean\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('c:/Users/Deepan/RecSys/RecSys/ui/app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }
