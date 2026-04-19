@@ -277,10 +277,22 @@ st.markdown(
         font-size: 16px;
     }
 
-    /* Tabs — bigger labels */
+    /* Tabs — bold, larger labels */
+    [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
     [data-baseweb="tab"] {
-        font-size: 17px !important;
-        font-weight: 500;
+        font-size: 20px !important;
+        font-weight: 700 !important;
+        padding: 12px 18px !important;
+        letter-spacing: 0.2px;
+    }
+    [data-baseweb="tab"] [data-testid="stMarkdownContainer"] p {
+        font-size: 20px !important;
+        font-weight: 700 !important;
+    }
+    [data-baseweb="tab"][aria-selected="true"] {
+        color: #4f8bff !important;
     }
 
     /* Metric labels & values */
@@ -330,26 +342,39 @@ def _render_homepage_row(row, movies_df):
     }.get(model, model)
     st.caption(model_note)
 
-    cols = st.columns(len(items))
-    for col, iid in zip(cols, items):
-        with col:
-            try:
-                r = movies_df.loc[int(iid)]
-                title = r['title']
-                genres = r['genres']
-                year = int(r['year']) if pd.notna(r['year']) else ''
-            except Exception:
-                title, genres, year = f'Item {iid}', '', ''
-            genres_short = (genres or '')[:50]
-            card_html = (
-                "<div style=\"background:#1e1e2e;padding:10px;border-radius:8px;"
-                "min-height:110px;font-size:13px;color:#eee;\">"
-                f"<b style=\"font-size:14px;\">{title}</b><br/>"
-                f"<span style=\"color:#aaa;font-size:12px;\">{year}</span><br/>"
-                f"<span style=\"color:#888;font-size:11px;\">{genres_short}</span>"
-                "</div>"
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
+    per_row = 5
+    n = len(items)
+    n_rows = (n + per_row - 1) // per_row
+    for r_idx in range(n_rows):
+        cols = st.columns(per_row)
+        for c_idx in range(per_row):
+            i = r_idx * per_row + c_idx
+            if i >= n:
+                continue
+            iid = items[i]
+            with cols[c_idx]:
+                try:
+                    mr = movies_df.loc[int(iid)]
+                    title = mr['title']
+                    genres = mr['genres']
+                    year = int(mr['year']) if pd.notna(mr['year']) else ''
+                except Exception:
+                    title, genres, year = f'Item {iid}', '', ''
+                genres_short = (genres or '')[:60]
+                card_html = (
+                    "<div style=\"background:#1e1e2e;padding:12px;border-radius:8px;"
+                    "min-height:140px;font-size:13px;color:#eee;margin-bottom:8px;\">"
+                    f"<div style=\"font-size:13px;color:#888;\">#{i + 1}</div>"
+                    f"<div style=\"font-size:15px;font-weight:600;margin-top:4px;"
+                    "line-height:1.3;\">"
+                    f"{title}</div>"
+                    f"<div style=\"font-size:12px;color:#aaa;margin-top:6px;\">{year}</div>"
+                    f"<div style=\"font-size:12px;color:#999;margin-top:4px;"
+                    "line-height:1.3;\">"
+                    f"{genres_short}</div>"
+                    "</div>"
+                )
+                st.markdown(card_html, unsafe_allow_html=True)
     st.markdown('')
 
 
