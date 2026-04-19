@@ -10,137 +10,83 @@ from utils.seed import set_seed
 logger = get_logger('simulate')
 
 
-def create_sparse_cohorts(df, cfg):
-    """
-    Thin existing warm users to create balanced cohorts.
-    Returns a DataFrame with cohort column added.
-    """
+def _to_native(obj):
+    if isinstance(obj, (np.integer,)): return int(obj)
+    if isinstance(obj, (np.floating,)): return float(obj)
+    if isinstance(obj, np.ndarray): return obj.tolist()
+    if isinstance(obj, list): return [_to_native(i) for i in obj]
+    if isinstance(obj, dict): return {k: _to_native(v) for k, v in obj.items()}
+    return obj
+
+
+def create_sparse_cohorts(cfg):
     set_seed()
-    sim_cfg = cfg['simulation']
-    thresholds = sim_cfg['sparse_cohorts']
-    min_per_cohort = sim_cfg['min_users_per_cohort']
-
-
+    sim = cfg['simulation']
+    thresholds = sim['sparse_cohorts']
     train = pd.read_parquet(Path(cfg['data']['processed_dir']) / 'train.parquet')
-    user_hist = train.groupby('user_id').size().rename('history_len').reset_index()
+    hist = train.groupby('user_id').size().rename('history_len').reset_index()
 
+    warm = hist[hist['history_len'] > thresholds['sparse_high']].copy()
+    warm['cohort'] = 'warm'
+    cohorts = [warm]
+    warm_ids = warm['user_id'].values
 
-    def assign_cohort(h):
-        if h == thresholds['cold']: return 'cold'
-        elif h <= thresholds['sparse_low']: return 'sparse_low'
-        elif h <= thresholds['sparse_high']: return 'sparse_high'
-        else: return 'warm'
+    for name, cap in [('sparse_high', thresholds['sparse_high']),
+                       ('sparse_low', thresholds['sparse_low']),
+                       ('cold', 0)]:
+        n = min(sim['min_users_per_cohort'], len(warm_ids))
+        ids = np.random.choice(warm_ids, size=n, replace=False)
+        row = pd.DataFrame({'user_id': ids, 'history_len': cap, 'cohort': name})
+        cohorts.append(row)
+        logger.info(f'Cohort {name}: {n} users')
 
-
-    user_hist['cohort'] = user_hist['history_len'].apply(assign_cohort)
-
-
-    cohort_dfs = []
-    for cohort_name in ['cold', 'sparse_low', 'sparse_high', 'warm']:
-        cohort_users = user_hist[user_hist['cohort'] == cohort_name]
-        if cohort_name == 'cold':
-            # Synthesize cold users (no history)
-            n = max(min_per_cohort, len(cohort_users))
-            warm_users = user_hist[user_hist['cohort'] == 'warm']['user_id'].values
-            sampled = np.random.choice(warm_users, size=n, replace=False)
-            cold_df = pd.DataFrame({'user_id': sampled, 'history_len': 0, 'cohort': 'cold'})
-            cohort_dfs.append(cold_df)
-        else:
-            cohort_dfs.append(cohort_users)
-        logger.info(f'Cohort {cohort_name}: {len(cohort_dfs[-1])} users')
-
-
-    cohorts = pd.concat(cohort_dfs, ignore_index=True)
-
-
-    out = Path(cfg['data']['processed_dir']) / 'cohorts'
-    out.mkdir(parents=True, exist_ok=True)
-    cohorts.to_parquet(out / 'user_cohorts.parquet', index=False)
-    logger.info(f'Saved cohorts to {out}/user_cohorts.parquet')
-    return cohorts
+    out_df = pd.concat(cohorts, ignore_index=True)
+    out_path = Path(cfg['data']['processed_dir']) / 'cohorts'
+    out_path.mkdir(parents=True, exist_ok=True)
+    out_df.to_parquet(out_path / 'user_cohorts.parquet', index=False)
+    return out_df
 
 
 def simulate_daily_updates(df_full, cfg):
-    """
-    Simulate daily catalog and user changes over N days.
-    Saves one snapshot parquet per day.
-    """
     set_seed()
-    sim_cfg = cfg['simulation']
-    n_days = sim_cfg['simulation_days']
-    new_users_per_day = sim_cfg['daily_new_users']
-    deprecation_rate = sim_cfg['daily_deprecation_rate']
-    new_item_rate = sim_cfg['daily_new_item_rate']
+    sim = cfg['simulation']
+    items = df_full['item_id'].unique()
+    max_item = int(df_full['item_id'].max())
+    max_user = int(df_full['user_id'].max())
+    active = set(items.tolist())
+    snaps = []
 
+    for day in range(1, sim['simulation_days'] + 1):
+        n_dep = max(1, int(len(active) * sim['daily_deprecation_rate']))
+        dep = set(np.random.choice(list(active), size=n_dep, replace=False).tolist())
+        active -= dep
+        n_new = max(1, int(len(items) * sim['daily_new_item_rate']))
+        new_items = list(range(max_item + 1, max_item + 1 + n_new))
+        max_item += n_new
+        active.update(new_items)
+        new_users = list(range(max_user + 1, max_user + 1 + sim['daily_new_users']))
+        max_user += sim['daily_new_users']
+        snaps.append(_to_native({
+            'day': day, 'n_active': len(active),
+            'n_deprecated': n_dep, 'n_new_items': n_new,
+            'n_new_users': sim['daily_new_users'],
+            'new_user_ids': new_users, 'new_item_ids': new_items,
+            'deprecated_item_ids': list(dep),
+        }))
 
     out = Path(cfg['data']['processed_dir']) / 'simulation'
     out.mkdir(parents=True, exist_ok=True)
-
-
-    all_items = df_full['item_id'].unique()
-    max_user_id = df_full['user_id'].max()
-    max_item_id = df_full['item_id'].max()
-    active_items = set(all_items)
-    deprecated_items = set()
-
-
-    snapshots = []
-    for day in range(1, n_days + 1):
-        # Deprecate items
-        n_deprecate = max(1, int(len(active_items) * deprecation_rate))
-        to_deprecate = set(np.random.choice(list(active_items), size=n_deprecate, replace=False))
-        active_items -= to_deprecate
-        deprecated_items |= to_deprecate
-
-
-        # Add new items
-        n_new_items = max(1, int(len(all_items) * new_item_rate))
-        new_item_ids = list(range(max_item_id + 1, max_item_id + 1 + n_new_items))
-        max_item_id += n_new_items
-        active_items.update(new_item_ids)
-
-
-        # Add new users
-        new_user_ids = list(range(max_user_id + 1, max_user_id + 1 + new_users_per_day))
-        max_user_id += new_users_per_day
-
-
-        snapshot = {
-            'day': day,
-            'n_active_items': len(active_items),
-            'n_deprecated_items': len(deprecated_items),
-            'n_new_items_today': n_new_items,
-            'n_new_users_today': new_users_per_day,
-            'new_user_ids': new_user_ids,
-            'new_item_ids': new_item_ids,
-            'deprecated_item_ids': list(to_deprecate),
-        }
-        snapshots.append(snapshot)
-        logger.info(f'Day {day}: active_items={len(active_items)}, new_users={new_users_per_day}, deprecated={n_deprecate}')
-
-
-    def _convert(obj):
-        if isinstance(obj, (np.integer,)): return int(obj)
-        if isinstance(obj, (np.floating,)): return float(obj)
-        if isinstance(obj, np.ndarray): return obj.tolist()
-        if isinstance(obj, list): return [_convert(i) for i in obj]
-        if isinstance(obj, dict): return {k: _convert(v) for k, v in obj.items()}
-        return obj
-
-
     with open(out / 'daily_snapshots.json', 'w') as f:
-        json.dump(_convert(snapshots), f, indent=2)
-    logger.info(f'Saved {n_days} daily snapshots to {out}/daily_snapshots.json')
-    return snapshots
+        json.dump(snaps, f, indent=2)
+    logger.info(f'Simulated {sim["simulation_days"]} days.')
+    return snaps
 
 
 def run():
     cfg = get_config()
-    df_full = pd.read_parquet(Path(cfg['data']['processed_dir']) / 'full.parquet')
-    cohorts = create_sparse_cohorts(df_full, cfg)
-    snapshots = simulate_daily_updates(df_full, cfg)
-    logger.info('Simulation complete.')
-    return cohorts, snapshots
+    full = pd.read_parquet(Path(cfg['data']['processed_dir']) / 'full.parquet')
+    create_sparse_cohorts(cfg)
+    simulate_daily_updates(full, cfg)
 
 
 if __name__ == '__main__':

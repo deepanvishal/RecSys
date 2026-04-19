@@ -9,101 +9,124 @@ from utils.logger import get_logger
 logger = get_logger('preprocess')
 
 
-def load_raw(cfg):
-    path = Path(cfg['data']['raw_dir']) / 'electronics.parquet'
-    return pd.read_parquet(path)
+GENRES = ['Action', 'Adventure', 'Animation', "Children's", 'Comedy', 'Crime',
+          'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 'Musical',
+          'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western']
 
 
-def clean(df, cfg):
-    logger.info('Cleaning...')
-    df = df.drop_duplicates(subset=['user_id', 'item_id_raw', 'timestamp'])
-    df = df.dropna(subset=['user_id', 'item_id_raw', 'timestamp', 'rating'])
-    df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
-    df = df.dropna(subset=['timestamp'])
-    df['timestamp'] = df['timestamp'].astype('int64')
+def _genre_col(g):
+    return 'genre_' + g.lower().replace('-', '_').replace("'", '')
+
+
+def load_ratings(ml_dir, sep):
+    df = pd.read_csv(
+        ml_dir / 'ratings.dat', sep=sep, engine='python',
+        names=['user_id', 'item_id', 'rating', 'timestamp'],
+        encoding='latin-1',
+    )
+    df['user_id'] = df['user_id'].astype('int32') - 1   # 0-indexed
+    df['item_id'] = df['item_id'].astype('int32') - 1
     df['rating'] = df['rating'].astype('float32')
-    df['title'] = df['title'].fillna('Unknown')
-    df['price'] = pd.to_numeric(df['price'], errors='coerce')
-    return df
-
-
-def filter_interactions(df, cfg):
-    logger.info('Filtering by min interactions...')
-    item_counts = df.groupby('item_id_raw').size()
-    valid_items = item_counts[item_counts >= cfg['data']['min_item_interactions']].index
-    df = df[df['item_id_raw'].isin(valid_items)]
-
-
-    user_counts = df.groupby('user_id').size()
-    valid_users = user_counts[user_counts >= cfg['data']['min_user_interactions']].index
-    df = df[df['user_id'].isin(valid_users)]
-    logger.info(f'After filter: {df.shape}, users: {df.user_id.nunique()}, items: {df.item_id_raw.nunique()}')
-    return df
-
-
-def encode_ids(df):
-    logger.info('Encoding user/item IDs...')
-    user_map = {u: i for i, u in enumerate(sorted(df['user_id'].unique()))}
-    item_map = {it: i for i, it in enumerate(sorted(df['item_id_raw'].unique()))}
-    df['user_id'] = df['user_id'].map(user_map).astype('int64')
-    df['item_id'] = df['item_id_raw'].map(item_map).astype('int64')
-    return df, user_map, item_map
-
-
-def add_features(df, cfg):
     df['implicit_feedback'] = 1
-    df['user_history_len'] = df.groupby('user_id')['user_id'].transform('count')
-    # Price bucket: 5 quantiles (0-4), NaN -> -1
-    df['price_bucket'] = pd.qcut(df['price'], q=5, labels=False, duplicates='drop')
-    df['price_bucket'] = df['price_bucket'].fillna(-1).astype('int8')
-    # Popularity rank: normalized item interaction count
-    item_pop = df.groupby('item_id').size().rename('item_pop')
-    df = df.merge(item_pop, on='item_id')
-    df['popularity_rank'] = (df['item_pop'] / df['item_pop'].max()).astype('float32')
-    df = df.drop(columns=['item_pop'])
+    logger.info(f'Ratings: {df.shape}, users: {df.user_id.nunique()}, items: {df.item_id.nunique()}')
     return df
 
 
-def temporal_split(df, cfg):
-    logger.info('Temporal split — strictly by timestamp, no leakage...')
-    df = df.sort_values('timestamp')
-    n = len(df)
-    train_end = int(n * cfg['data']['train_ratio'])
-    val_end = int(n * (cfg['data']['train_ratio'] + cfg['data']['val_ratio']))
-    df['split'] = 'test'
-    df.iloc[:train_end, df.columns.get_loc('split')] = 'train'
-    df.iloc[train_end:val_end, df.columns.get_loc('split')] = 'val'
-    logger.info(f"Split sizes — train: {(df.split=='train').sum()}, val: {(df.split=='val').sum()}, test: {(df.split=='test').sum()}")
+def load_movies(ml_dir, sep):
+    movies = pd.read_csv(
+        ml_dir / 'movies.dat', sep=sep, engine='python',
+        names=['item_id', 'title', 'genres'],
+        encoding='latin-1',
+    )
+    movies['item_id'] = movies['item_id'].astype('int32') - 1
+    movies['year'] = movies['title'].str.extract(r'\((\d{4})\)').astype('float32')
+    for g in GENRES:
+        movies[_genre_col(g)] = movies['genres'].str.contains(g, regex=False).astype('int8')
+    movies['genre_vector'] = movies['genres'].apply(
+        lambda x: [int(g in x) for g in GENRES]
+    )
+    logger.info(f'Movies: {movies.shape}')
+    return movies
+
+
+def load_users(ml_dir, sep):
+    users = pd.read_csv(
+        ml_dir / 'users.dat', sep=sep, engine='python',
+        names=['user_id', 'gender', 'age', 'occupation', 'zip'],
+        encoding='latin-1',
+    )
+    users['user_id'] = users['user_id'].astype('int32') - 1
+    users['gender_enc'] = (users['gender'] == 'M').astype('int8')
+    age_map = {1: 0, 18: 1, 25: 2, 35: 3, 45: 4, 50: 5, 56: 6}
+    users['age_enc'] = users['age'].map(age_map).fillna(0).astype('int8')
+    users['occupation'] = users['occupation'].astype('int8')
+    logger.info(f'Users: {users.shape}')
+    return users
+
+
+def leave_one_out_split(df):
+    logger.info('Applying leave-one-out split (standard ML-1M benchmark)...')
+    df = df.sort_values(['user_id', 'timestamp'])
+    df['rank'] = df.groupby('user_id').cumcount(ascending=False)
+    df['split'] = 'train'
+    df.loc[df['rank'] == 0, 'split'] = 'test'
+    df.loc[df['rank'] == 1, 'split'] = 'val'
+    df = df.drop(columns=['rank'])
+    logger.info(f'  Train: {(df.split=="train").sum()}')
+    logger.info(f'  Val:   {(df.split=="val").sum()}')
+    logger.info(f'  Test:  {(df.split=="test").sum()}')
     return df
-
-
-def save_outputs(df, user_map, item_map, cfg):
-    out = Path(cfg['data']['processed_dir'])
-    out.mkdir(parents=True, exist_ok=True)
-    for split in ['train', 'val', 'test']:
-        subset = df[df['split'] == split].drop(columns=['split'])
-        subset.to_parquet(out / f'{split}.parquet', index=False)
-        logger.info(f'Saved {split}: {subset.shape}')
-    df.to_parquet(out / 'full.parquet', index=False)
-    # Save mappings for inference
-    with open(out / 'user_map.json', 'w') as f: json.dump({str(k): v for k, v in user_map.items()}, f)
-    with open(out / 'item_map.json', 'w') as f: json.dump({str(k): v for k, v in item_map.items()}, f)
-    # Save item metadata for two-tower
-    item_meta = df[['item_id', 'item_id_raw', 'title', 'price_bucket', 'popularity_rank', 'main_category']].drop_duplicates(subset='item_id')
-    item_meta.to_parquet(out / 'item_metadata.parquet', index=False)
-    logger.info(f'Saved item metadata: {item_meta.shape}')
 
 
 def run():
     cfg = get_config()
-    df = load_raw(cfg)
-    df = clean(df, cfg)
-    df = filter_interactions(df, cfg)
-    df, user_map, item_map = encode_ids(df)
-    df = add_features(df, cfg)
-    df = temporal_split(df, cfg)
-    save_outputs(df, user_map, item_map, cfg)
-    logger.info('Preprocessing complete.')
+    ml_dir = Path(cfg['data']['raw_dir']) / 'ml-1m'
+    sep = cfg['data']['delimiter']
+    out = Path(cfg['data']['processed_dir'])
+    out.mkdir(parents=True, exist_ok=True)
+
+    ratings = load_ratings(ml_dir, sep)
+    movies = load_movies(ml_dir, sep)
+    users = load_users(ml_dir, sep)
+
+    df = ratings.merge(
+        movies[['item_id', 'title', 'year', 'genres', 'genre_vector']],
+        on='item_id', how='left',
+    )
+    df = df.merge(
+        users[['user_id', 'gender', 'gender_enc', 'age', 'age_enc', 'occupation']],
+        on='user_id', how='left',
+    )
+
+    item_pop = df.groupby('item_id').size().rename('item_pop')
+    df = df.merge(item_pop, on='item_id')
+    df['popularity_rank'] = (df['item_pop'] / df['item_pop'].max()).astype('float32')
+    df = df.drop(columns=['item_pop'])
+
+    df = leave_one_out_split(df)
+
+    for split in ['train', 'val', 'test']:
+        sub = df[df['split'] == split].drop(columns=['split'])
+        sub.to_parquet(out / f'{split}.parquet', index=False)
+    df.to_parquet(out / 'full.parquet', index=False)
+
+    item_meta = movies[['item_id', 'title', 'year', 'genres', 'genre_vector']].copy()
+    item_meta.to_parquet(out / 'item_metadata.parquet', index=False)
+
+    user_meta = users[['user_id', 'gender', 'gender_enc', 'age', 'age_enc', 'occupation']].copy()
+    user_meta.to_parquet(out / 'user_metadata.parquet', index=False)
+
+    n_users = int(df['user_id'].max()) + 1
+    n_items = int(df['item_id'].max()) + 1
+    n_train = int((df['split'] == 'train').sum())
+    with open(out / 'dataset_stats.json', 'w') as f:
+        json.dump({
+            'n_users': n_users, 'n_items': n_items,
+            'n_train': n_train,
+            'n_genres': len(GENRES), 'genres': GENRES,
+        }, f, indent=2)
+
+    logger.info(f'Preprocessing complete. n_users={n_users}, n_items={n_items}')
     return df
 
 
