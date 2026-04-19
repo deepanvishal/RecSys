@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-import wandb
 from pathlib import Path
 from torch.utils.data import DataLoader
 from config.config_loader import get_config
@@ -119,6 +118,7 @@ def run():
 
     all_item_ids, all_content, all_genres = build_full_item_tensors(content_emb, genre_matrix, device)
 
+    import wandb
     wandb.init(
         project=cfg['wandb']['project'],
         group='two_tower',

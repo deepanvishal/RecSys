@@ -136,6 +136,16 @@ def api_homepage(history, gender_enc=None, age_enc=None, n=10):
     }, timeout=30)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_homepage(history_tuple, gender_enc, age_enc, n):
+    return api_homepage(list(history_tuple), gender_enc, age_enc, n)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_item_similarity(item_id, n):
+    return api_post('/item_similarity', {'item_id': int(item_id), 'n': int(n)})
+
+
 # ── Display helpers ───────────────────────────────────────────────────────────
 
 
@@ -175,6 +185,41 @@ def sim_to_table(items, scores, movies):
             'Score': round(float(sc), 4),
         })
     return pd.DataFrame(rows)
+
+
+def _render_movie_card(rank, item_id, score, movies):
+    title = item_label(item_id, movies)
+    genres = item_genres(item_id, movies)
+    st.markdown(
+        f'''
+        <div style="padding:12px; border:1px solid #333; border-radius:8px;
+                    min-height:140px; background:rgba(255,255,255,0.03);
+                    margin-bottom:8px;">
+          <div style="font-size:13px; color:#888;">#{rank}</div>
+          <div style="font-size:15px; font-weight:600; margin-top:4px;
+                      line-height:1.3;">{title}</div>
+          <div style="font-size:12px; color:#999; margin-top:6px;
+                      line-height:1.3;">{genres}</div>
+          <div style="font-size:12px; color:#6cf; margin-top:8px;">
+                score: {score:.3f}</div>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_sim_grid(label, items, scores, movies):
+    st.markdown(f'### {label}')
+    n = len(items)
+    per_row = 5
+    rows = (n + per_row - 1) // per_row
+    for r in range(rows):
+        cols = st.columns(per_row)
+        for c in range(per_row):
+            idx = r * per_row + c
+            if idx < n:
+                with cols[c]:
+                    _render_movie_card(idx + 1, items[idx], scores[idx], movies)
 
 
 def interaction_dist(item_id, idf):
@@ -232,10 +277,22 @@ st.markdown(
         font-size: 16px;
     }
 
-    /* Tabs — bigger labels */
+    /* Tabs — bold, larger labels */
+    [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
     [data-baseweb="tab"] {
-        font-size: 17px !important;
-        font-weight: 500;
+        font-size: 20px !important;
+        font-weight: 700 !important;
+        padding: 12px 18px !important;
+        letter-spacing: 0.2px;
+    }
+    [data-baseweb="tab"] [data-testid="stMarkdownContainer"] p {
+        font-size: 20px !important;
+        font-weight: 700 !important;
+    }
+    [data-baseweb="tab"][aria-selected="true"] {
+        color: #4f8bff !important;
     }
 
     /* Metric labels & values */
@@ -285,26 +342,39 @@ def _render_homepage_row(row, movies_df):
     }.get(model, model)
     st.caption(model_note)
 
-    cols = st.columns(len(items))
-    for col, iid in zip(cols, items):
-        with col:
-            try:
-                r = movies_df.loc[int(iid)]
-                title = r['title']
-                genres = r['genres']
-                year = int(r['year']) if pd.notna(r['year']) else ''
-            except Exception:
-                title, genres, year = f'Item {iid}', '', ''
-            genres_short = (genres or '')[:50]
-            card_html = (
-                "<div style=\"background:#1e1e2e;padding:10px;border-radius:8px;"
-                "min-height:110px;font-size:13px;color:#eee;\">"
-                f"<b style=\"font-size:14px;\">{title}</b><br/>"
-                f"<span style=\"color:#aaa;font-size:12px;\">{year}</span><br/>"
-                f"<span style=\"color:#888;font-size:11px;\">{genres_short}</span>"
-                "</div>"
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
+    per_row = 5
+    n = len(items)
+    n_rows = (n + per_row - 1) // per_row
+    for r_idx in range(n_rows):
+        cols = st.columns(per_row)
+        for c_idx in range(per_row):
+            i = r_idx * per_row + c_idx
+            if i >= n:
+                continue
+            iid = items[i]
+            with cols[c_idx]:
+                try:
+                    mr = movies_df.loc[int(iid)]
+                    title = mr['title']
+                    genres = mr['genres']
+                    year = int(mr['year']) if pd.notna(mr['year']) else ''
+                except Exception:
+                    title, genres, year = f'Item {iid}', '', ''
+                genres_short = (genres or '')[:60]
+                card_html = (
+                    "<div style=\"background:#1e1e2e;padding:12px;border-radius:8px;"
+                    "min-height:140px;font-size:13px;color:#eee;margin-bottom:8px;\">"
+                    f"<div style=\"font-size:13px;color:#888;\">#{i + 1}</div>"
+                    f"<div style=\"font-size:15px;font-weight:600;margin-top:4px;"
+                    "line-height:1.3;\">"
+                    f"{title}</div>"
+                    f"<div style=\"font-size:12px;color:#aaa;margin-top:6px;\">{year}</div>"
+                    f"<div style=\"font-size:12px;color:#999;margin-top:4px;"
+                    "line-height:1.3;\">"
+                    f"{genres_short}</div>"
+                    "</div>"
+                )
+                st.markdown(card_html, unsafe_allow_html=True)
     st.markdown('')
 
 
@@ -334,24 +404,21 @@ with tab_for_you:
         gender_enc_hp = GENDER_OPTIONS[g_sel]
         age_enc_hp = AGE_OPTIONS[a_sel]
 
-    hp_btn = st.button('Load my recommendations', type='primary', key='hp_run')
+    with st.spinner('Building your homepage...'):
+        hp_result = cached_homepage(
+            tuple(profile['history']),
+            gender_enc_hp,
+            age_enc_hp,
+            10,
+        )
 
-    if hp_btn:
-        with st.spinner('Building your homepage...'):
-            hp_result = api_homepage(
-                history=profile['history'],
-                gender_enc=gender_enc_hp,
-                age_enc=age_enc_hp,
-                n=10,
-            )
-
-        if hp_result is None:
-            st.error('API not reachable.')
-        else:
+    if hp_result is None:
+        st.error('API not reachable.')
+    else:
+        st.divider()
+        for row in hp_result['rows']:
+            _render_homepage_row(row, movies)
             st.divider()
-            for row in hp_result['rows']:
-                _render_homepage_row(row, movies)
-                st.divider()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -379,7 +446,6 @@ with tab_sim:
     selected_id = title_map[selected_title]
 
     n_recs = st.slider('Similar movies per model', 5, 15, 10, key='sim_n')
-    run_btn = st.button('Find Similar Movies', type='primary', key='sim_run')
 
     st.divider()
 
@@ -400,26 +466,25 @@ with tab_sim:
         st.caption('Interactions by age group')
         st.bar_chart(age_dist.set_index('Age Group')['Interactions'])
 
-    if run_btn:
-        with st.spinner('Computing similarities...'):
-            sim_result = api_post('/item_similarity',
-                                  {'item_id': int(selected_id), 'n': n_recs})
+    with st.spinner('Computing similarities...'):
+        sim_result = cached_item_similarity(int(selected_id), int(n_recs))
 
-        if sim_result is None:
-            st.error('API not reachable on localhost:8000')
-        else:
+    if sim_result is None:
+        st.error('API not reachable on localhost:8000')
+    else:
+        st.divider()
+        for key, label in [
+            ('cf', 'CF — Cosine Similarity'),
+            ('svd', 'SVD — Latent Factors'),
+            ('two_tower', 'Two-Tower — Content + ID'),
+        ]:
+            _render_sim_grid(
+                label,
+                sim_result[key]['items'],
+                sim_result[key]['scores'],
+                movies,
+            )
             st.divider()
-            cols = st.columns(3)
-            for col, (key, label) in zip(
-                cols, [('cf', 'CF — Cosine Similarity'),
-                       ('svd', 'SVD — Latent Factors'),
-                       ('two_tower', 'Two-Tower — Content + ID')],
-            ):
-                with col:
-                    st.markdown(f'**{label}**')
-                    df = sim_to_table(sim_result[key]['items'],
-                                       sim_result[key]['scores'], movies)
-                    st.table(df)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
