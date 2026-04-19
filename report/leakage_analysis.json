@@ -1,0 +1,18 @@
+{
+  "n_train_users": 13107132,
+  "n_val_users": 4407866,
+  "n_test_users": 4151876,
+  "val_users_seen_in_train": 1850416,
+  "val_users_seen_pct": 41.97986054929982,
+  "test_users_seen_in_train": 1535208,
+  "test_users_seen_pct": 36.97624880897214,
+  "test_users_unseen_pct": 63.02375119102786,
+  "n_train_items": 496493,
+  "n_val_items": 287790,
+  "n_test_items": 266927,
+  "val_items_seen_in_train": 216395,
+  "val_items_seen_pct": 75.1919802633865,
+  "test_items_seen_in_train": 153741,
+  "test_items_seen_pct": 57.596646274074935,
+  "test_items_unseen_pct": 42.403353725925065
+}
