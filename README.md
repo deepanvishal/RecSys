@@ -1,14 +1,3 @@
----
-title: Serko RecSys
-emoji: 🎬
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: false
-license: mit
----
-
 # Serko RecSys — MovieLens 1M
 
 A production-grade recommender system. Five models, a tiered inference engine,
